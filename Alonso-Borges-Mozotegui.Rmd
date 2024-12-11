@@ -1,0 +1,445 @@
+---
+title: "Trabajo Práctico Integrador"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+library(countrycode)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(gridExtra)
+library(jsonlite)
+library(maps)
+library(patchwork)
+library(RColorBrewer)
+library(sf)
+library(tidyverse)
+library(viridis)
+library(plotly)
+
+
+
+
+
+
+
+knitr::opts_chunk$set(echo = FALSE)
+
+
+
+#####################################
+
+
+
+# Al momento de ubicar el país de impacto del meteorito, y debido a la gran cantidad de datosy las limitaciones de la API gratuita que estabamos utilizando, 
+# se nos hizo imposible ejecutar el código completo. Es por eso que ejecutamos un código parecido al de debajo, y lo unimos en un csv que cargamos a github. Básicamente, obtuvimos el country_code y el id utilizando la latitud y la longitud. Tardó aproximadamente entre 4 y 5 horas entre todas las computadoras que utilizamos.
+
+url_meteoritos_id_country <- "https://raw.githubusercontent.com/alonns04/meteoritos_csv_country_code/main/meteoritos_id_country_code.csv"
+
+# Definir una función para obtener el país a partir de latitud y longitud usando Nominatim
+#get_country_from_coords <- function(lat, long) {
+#  url <- paste0("https://nominatim.openstreetmap.org/reverse?lat=", lat, "&lon=", long, "&format=json")
+#  
+#  # Hacer la solicitud HTTPS
+#  response <- GET(url)
+  
+  # Verificar si la solicitud fue exitosa
+#  if (status_code(response) == 200) {
+#    content <- content(response, "text", encoding = "UTF-8")
+#    json_content <- fromJSON(content)
+    
+    # Extraer el nombre del país
+#    country_name <- json_content$address$country
+    
+#    return(country_name)
+#  } else {
+#    return(NA)
+#  }
+#}
+
+
+
+#####################################
+
+
+
+# Leer el archivo CSV desde la URL
+meteoritos_id_country <- read.csv(url_meteoritos_id_country)
+
+# Mostrar las primeras filas del dataframe
+
+
+meteoritos <- readr::read_csv("https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2019/2019-06-11/meteorites.csv")
+
+# Eliminar columnas innecesarias
+meteoritos <- meteoritos[, !(names(meteoritos) %in% c("name_type", "class", "fall", "geolocation", "name"))]
+
+# Eliminar filas con valores NA
+meteoritos <- na.omit(meteoritos)
+
+# Eliminar registros con ambas, latitud y longitud igual a 0, y además, con una masa de 0. 
+meteoritos <- meteoritos %>%
+  filter(!(lat == 0 & long == 0) & !(mass == 0))
+
+# Eliminar meteoritos duplicados con el mismo año, latitud, longitud y masa
+meteoritos <- meteoritos[!duplicated(meteoritos[, c("lat", "long", "year", "mass")]), ]
+
+# Exportar el dataset limpio como archivo CSV
+world <- map_data("world")
+
+# Ajustar los paquetes y datos
+
+# Obtener los datos del mapa mundial
+world <- map_data("world")
+
+# Calcular el cuartil superior (99%) para la variable 'mass'
+umbral_mass <- quantile(meteoritos$mass, 0.99)
+
+# Crear una columna en el dataset para clasificar en 90% más pequeño y 10% más grande
+meteoritos <- meteoritos %>%
+  mutate(mass_group = ifelse(mass > umbral_mass, "1% más grande", "99% más pequeño"))
+
+meteoritos <- meteoritos %>% mutate(mass = mass / 1000000)  # Convertir la masa a toneladas
+
+
+# 2. Gráfico de caja y bigotes (boxplot) para Masa vs Latitud
+# Para analizar la latitud agrupando la masa en intervalos
+# Calcular los cuartiles de la columna 'mass'
+cuartiles <- quantile(meteoritos$mass, probs = seq(0, 1, by = 0.25), na.rm = TRUE)
+
+# Crear una nueva columna 'mass_grupo' con los cuartiles, y nombrar los grupos con el formato "MINIMO - MÁXIMO"
+meteoritos <- meteoritos %>%
+    mutate(mass_grupo = cut(mass, 
+                          breaks = cuartiles, 
+                          include.lowest = TRUE, 
+                          labels = paste0(
+                            case_when(
+                              seq_along(cuartiles[-length(cuartiles)]) == 1 ~ "1er",
+                              seq_along(cuartiles[-length(cuartiles)]) == 2 ~ "2do",
+                              seq_along(cuartiles[-length(cuartiles)]) == 3 ~ "3er",
+                              seq_along(cuartiles[-length(cuartiles)]) == 4 ~ "4to",  # Cambiar aquí para "4to" sin "to"
+                              TRUE ~ paste(seq_along(cuartiles[-length(cuartiles)]), "to")
+                            ),
+                            " Cuartil según Masa"
+                          )))
+
+
+head(meteoritos_id_country)
+
+```
+### **Parte 1**
+
+**Pregunta:** ¿Cuál es la distribución geográfica de los meteoritos y donde cayeron los más pesados? 
+
+**Introducción:** En este informe se analiza una base de datos sobre impactos de meteoritos en todo el planeta, proporcionada por la NASA. Esta base incluye información detallada de más de 45.000 meteoritos, como su nombre, ubicación geográfica, masa y año de impacto.
+	En primer lugar, examinaremos la distribución geográfica de los meteoritos, prestando especial atención a los más masivos, para comprender su entrada en la atmósfera y los posibles factores geográficos que influyen en su dispersión.
+
+
+**Enfoque:** Como primera medida, tomamos la decisión de eliminar columnas innecesarias para facilitar la manipulación de los datos. Eliminamos "name_type", "class", "fall", "geolocation" y "name". Además, eliminamos los elementos que tenían latitud, longitud, y masa iguales a 0 ya que consideramos que se trataba de datos erroneos o incompletos. Por último, aquellos registros que tenían entre sí la misma latitud, longitud, año y masa, fueron tomados como duplicados y eliminados del dataset.
+
+
+**Analisis:** 
+
+```{r, fig.width=18, fig.height=6, fig.align='center', warning = FALSE, message = FALSE}
+
+# Ajustar los paquetes y datos
+
+# Obtener los datos del mapa mundial
+
+# Calcular el cuartil superior (99%) para la variable 'mass'
+umbral_mass <- quantile(meteoritos$mass, 0.99)
+
+
+
+
+# Crear el primer gráfico con la masa en toneladas
+a1 <- ggplot() +
+  geom_polygon(data = world, aes(x = long, y = lat, group = group), fill = "lightgray", color = "gray") +
+  geom_point(data = meteoritos, aes(x = long, y = lat, color = mass),  # Usar 'mass_toneladas'
+             shape = 19,    # Ajusta el tamaño si es necesario
+             alpha = 0.5) +
+  scale_color_viridis_c(option = "plasma", trans = "log", name = "Masa (t)", 
+                        labels = scales::label_comma(),
+                        breaks = c(min(meteoritos$mass), max(meteoritos$mass))) +  # Solo el valor mínimo y máximo
+  labs(title = "Distribución de los meteoritos clasificados por masa",
+       x = "Longitud", y = "Latitud") + 
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(size = 16, hjust = 0.5),  # Aumentar tamaño del título
+    axis.title = element_text(size = 14),  # Aumentar tamaño de los títulos de los ejes
+    axis.text = element_text(size = 12),   # Aumentar tamaño de los textos de los ejes
+    legend.text = element_text(size = 12)  # Aumentar tamaño de los textos de la leyenda
+  )
+
+# Crear el segundo gráfico con puntos más grandes para el 1% más pesado y puntos violetas más pequeños
+a2 <- ggplot() +
+  geom_polygon(data = world, aes(x = long, y = lat, group = group), fill = "lightgray", color = "gray") +
+  geom_point(data = meteoritos, aes(x = long, y = lat, color = mass_group, size = mass_group), 
+             shape = 19, alpha = 0.5) +  
+  scale_color_manual(values = c("99% más pequeño" = "darkmagenta", "1% más grande" = "orange")) +  # Colores manuales
+  scale_size_manual(values = c("99% más pequeño" = 2, "1% más grande" = 4)) +  # Ajustar tamaño de los puntos
+  labs(title = "Distribución de los meteoritos con enfoque en el 1% más grande",
+       x = "Longitud", y = "Latitud") +  # Etiqueta para color
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(size = 16, hjust = 0.5),  # Aumentar tamaño del título
+    axis.title = element_text(size = 14),  # Aumentar tamaño de los títulos de los ejes
+    axis.text = element_text(size = 12),   # Aumentar tamaño de los textos de los ejes
+    legend.text = element_text(size = 12)  # Aumentar tamaño de los textos de la leyenda
+  ) +
+  guides(
+    color = guide_legend(title = NULL),  # Eliminar el título en la leyenda de color
+    size = guide_legend(title = NULL)    # Eliminar el título en la leyenda de tamaño
+  )
+
+# Combinar los gráficos con el 100% del ancho
+combined_plot <- a1 + a2  +
+  plot_layout(ncol = 2, widths = c(1, 1)) # Asignar la misma proporción a cada gráfico
+
+# Mostrar el gráfico combinado
+combined_plot
+
+
+```
+
+```{r, fig.width=9, fig.height=6, fig.align='center', warning = FALSE, message = FALSE}
+ 
+# Carga los límites geográficos de los continentes
+world <- rnaturalearth::ne_countries(scale = "medium", returnclass = "sf")
+
+# Converte los datos de meteoritos a un objeto espacial
+meteoritos_sf <- st_as_sf(meteoritos, coords = c("long", "lat"), crs = 4326)
+
+# Realiza un join espacial para asignar continente
+meteoritos_sf <- st_join(meteoritos_sf, world, join = st_intersects)
+
+# Selecciona el 10% de los meteoritos más pesados
+top_10_percent <- round(nrow(meteoritos_sf) * 0.10)
+meteoritos_pesados <- meteoritos_sf %>%
+  arrange(desc(mass)) %>%
+  head(top_10_percent)
+
+# Eliminar filas con NA en la columna de continente
+meteoritos_pesados <- meteoritos_pesados %>%
+  filter(!is.na(continent))
+
+# Agrupa por continente y suma las masas de los meteoritos más pesados
+masa_por_continente <- meteoritos_pesados %>%
+  group_by(continent) %>%
+  summarise(total_mass = sum(mass, na.rm = TRUE))
+
+# Ajusta los nombres de los continentes
+masa_por_continente <- masa_por_continente %>%
+  mutate(continent = fct_recode(continent, 
+                                "Antártida" = "Antarctica",
+                                "América del Norte" = "North America",
+                                "América del Sur" = "South America",
+                                "Asia" = "Asia",
+                                "Europa" = "Europe",
+                                "África" = "Africa",
+                                "Oceanía" = "Oceania"))
+
+colores_spectral <- brewer.pal(15, "Spectral")
+
+# Definir colores personalizados para cada continente (usando nombres de colores)
+colores_personalizados <- c("Antártida" = colores_spectral[16],  # Un gris suave
+                            "América del Norte" = colores_spectral[10],  # Un azul
+                            "América del Sur" = colores_spectral[2],  # Un naranja rojizo
+                            "Asia" = colores_spectral[5],  # Un amarillo dorado
+                            "Europa" = colores_spectral[4],  # Un morado
+                            "Oceanía" = colores_spectral[3],  # Un azul claro
+                            "África" = colores_spectral[8])  # Un tono similar al naranja rojizo
+
+# Crear el gráfico de barras para los meteoritos más pesados por continente
+ggplot(masa_por_continente, aes(x = reorder(continent, -total_mass), y = total_mass, fill = continent)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = colores_personalizados) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(title = "Masa acumulada de los meteoritos más pesados por continente",
+       x = NULL,
+       y = "Masa total (t)") +
+  theme_minimal() +
+  theme(legend.position = "none",      # Eliminar la leyenda
+        plot.title = element_text(size = 16),  # Título en negrita y más grande
+        axis.title = element_text(size = 14),  # Títulos de los ejes más grandes
+        axis.text = element_text(size = 12),  # Girar las etiquetas del eje x
+        axis.text.x = element_text(size = 11), # Tamaño más pequeño para etiquetas del eje x
+        axis.text.y = element_text(size = 12)) # Tamaño estándar para el eje y
+
+```
+```{r, fig.width=10, fig.height=6, fig.align='center', warning=FALSE, message=FALSE}
+
+# Cuenta las frecuencias de cada país
+frecuencias <- meteoritos_id_country %>%
+  group_by(country_code) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count)) %>%
+  head(10)
+
+# Convertir los country_code a nombres de países
+frecuencias$country_name <- countrycode(frecuencias$country_code, "iso2c", "country.name")
+
+# Traducir los nombres de los países al español
+frecuencias$country_name <- recode(frecuencias$country_name,
+                                   "Algeria" = "Argelia",
+                                   "Australia" = "Australia",
+                                   "Chile" = "Chile",
+                                   "India" = "India",
+                                   "Kenya" = "Kenia",
+                                   "Libya" = "Libia",
+                                   "Morocco" = "Marruecos",
+                                   "Oman" = "Omán",
+                                   "Russia" = "Rusia",
+                                   "United States" = "Estados Unidos")
+
+# Reordenar el factor de country_name según la cantidad de registros
+frecuencias$country_name <- factor(frecuencias$country_name, 
+                                   levels = frecuencias$country_name[order(frecuencias$count, decreasing = TRUE)])
+
+# Crear el gráfico de barras
+p <- ggplot(frecuencias, aes(x = reorder(country_name, -count), y = count, fill = country_name)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Top 10 países con más impactos de meteoritos", 
+       x = "País",  # Agregar el nombre "País" al eje X
+       y = "Número de Registros") +
+  scale_fill_brewer(palette = "Spectral", guide = "none") +  # Eliminar el título de la leyenda
+  theme_minimal() +
+  theme(
+    legend.position = "right",  # Mover la leyenda a la derecha
+    axis.title = element_text(size = 14),  # Tamaño de los títulos de los ejes
+    axis.text = element_text(size = 12),   # Tamaño del texto de los ejes
+    plot.title = element_text(size = 12, hjust = 0.5),  # Tamaño y centrado del título
+    legend.text = element_blank(), # Eliminar el texto de la leyenda
+    axis.text.x = element_blank()  # Eliminar el título del eje X
+  )
+
+# Convertir el gráfico ggplot en un gráfico interactivo con Plotly
+p_interactivo <- ggplotly(p, tooltip = "y")
+
+# Mostrar el gráfico interactivo
+p_interactivo
+
+
+```
+
+
+**Discusión:** 
+Primeramente se utilizó un gráfico compuesto por dos mapas mundiales para visualizar la distribución geográfica de los meteoritos. En el primer mapa, ubicado a la izquierda, se representaron todos los puntos de impacto utilizando un gradiente de color que varía de azul a amarillo, pasando por magenta y naranja. Este gradiente refleja la masa de los meteoritos, donde los colores azules indican los menos pesados y los amarillos destacan los más masivos. Este enfoque permite identificar áreas con alta densidad de impactos y analizar cómo se relacionan con la masa de los meteoritos.
+
+El segundo mapa, situado a la derecha, destaca el 1% de los meteoritos más pesados mediante puntos amarillos, mientras que el 99% restante se representa en violeta. Este gráfico complementa al primero, ya que resalta de forma más clara las ubicaciones específicas donde cayeron los meteoritos más masivos. La combinación de ambos gráficos facilita un análisis más detallado de los patrones y las concentraciones en la distribución geográfica de los impactos. Podemos ver dos gráficos de barra, el primero nos indica una clara tendencia de los impactos de meteoritos hacia la zona de América del Norte. Por otro lado, en relación a los países, el claro vencedor es Oman, seguido de los Estados Unidos y de Libia.
+
+### **Parte 2**
+
+**Pregunta:** ¿Podriamos establecer alguna relacion entre la masa y alguna de las coordenadas del impacto?
+
+**Introducción:** El análisis de la distribución de meteoritos en la Tierra puede proporcionar información clave sobre los patrones de impacto y las influencias geográficas en la dispersión de estos cuerpos celestes. En este estudio, se investigan las relaciones entre la masa de los meteoritos y sus coordenadas de impacto (latitud y longitud). A través de la visualización de datos, buscamos identificar cómo la masa influye en la distribución geográfica de los impactos, lo que puede ofrecer nuevas perspectivas sobre los factores que determinan las trayectorias y localizaciones de los meteoritos.
+
+**Enfoque:** Siguiendo con los parámetros de la primera parte, utilizamos dos enfoques principales para continuar con el análisis: por un lado utilizamos los Gráficos de Distribución de Latitud y Longitud por Grupos de Masa. Este gráfico utiliza diagramas de cajas para mostrar la distribución de latitud y longitud de los meteoritos agrupados por categorías de masa. Se emplearon paletas de colores para diferenciar los grupos de masa, facilitando así la identificación de patrones de distribución geográfica en función de la masa.
+
+Y por otro lado, usamos los Gráficos de Dependencia de Latitud y Longitud respecto a la Masa. En estos gráficos, se emplearon puntos de dispersión con colores representando la masa y se añadieron líneas de tendencia para evaluar la relación entre la masa y las coordenadas de impacto (latitud y longitud). Esto permite observar posibles correlaciones lineales entre la masa de los meteoritos y su ubicación geográfica.
+
+**Analisis:**
+
+```{r, fig.width=18, fig.height=6, fig.align='center', warning = FALSE, message = FALSE}
+
+# Crear el gráfico de latitud
+grafico_latitud <- ggplot(meteoritos, aes(x = mass_grupo, y = lat)) +
+  geom_boxplot(aes(fill = mass_grupo), alpha = 0.7) +
+  scale_fill_brewer(palette = "Spectral", name = " ") +
+  labs(
+    title = "Distribución de Latitud por Grupos de Masa",
+    x = NULL,  # Eliminar el nombre del eje x
+    y = "Latitud"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5),  
+    legend.position = "bottom",  # Mover la leyenda a la parte inferior
+    axis.title.x = element_blank(),  # Eliminar el título del eje x
+    axis.text.x = element_blank(),   # Eliminar las etiquetas del eje x
+    legend.text = element_text(size = 10)  # Aumentar el tamaño del texto de la leyenda
+  )
+
+# Crear el gráfico de longitud
+grafico_longitud <- ggplot(meteoritos, aes(x = mass_grupo, y = long)) +
+  geom_boxplot(aes(fill = mass_grupo), alpha = 0.7) +
+  scale_fill_brewer(palette = "Spectral", name = "Grupo de Masa\n(t)") +
+  labs(
+    title = "Distribución de Longitud por Grupos de Masa",
+    x = "Grupo de Masa (t)",
+    y = "Longitud"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    legend.position = "none",       
+    axis.title.x = element_blank(),     
+    axis.text.x = element_blank(),        
+    axis.ticks.x = element_blank(),
+    legend.text = element_text(size = 14)  # Aumentar el tamaño del texto de la leyenda
+  )
+
+# Combinar los gráficos para que tengan igual proporción
+combined_plot <- grafico_longitud / grafico_latitud +
+  plot_layout(heights = c(1, 1)) 
+
+# Mostrar el gráfico combinado
+combined_plot
+
+```
+
+```{r, fig.width=18, fig.height=6, fig.align='center', warning = FALSE, message = FALSE}
+
+# 1. Gráfico de Masa vs Latitud
+grafico_latitud <- ggplot(meteoritos, aes(x = mass, y = lat, fill = mass)) +
+  geom_point(color = "black", stroke = 0.3, shape = 21, size = 2, alpha = 0.8) +
+  geom_smooth(method = "lm", color = "darkgreen", se = FALSE) +  # Añadir línea de regresión
+  scale_fill_viridis_c(option = "plasma", trans = "log", name = "Masa (t)", 
+                        labels = scales::label_comma(),
+                        breaks = c(min(meteoritos$mass), max(meteoritos$mass))) +  # Solo el valor mínimo y máximo
+  labs(title = "Dependencia Latitud",
+       y = "Latitud") +  # Título del eje y
+  theme_minimal() +
+  theme(
+    legend.position = "right",          # Mover la leyenda a la derecha
+    axis.title = element_text(size = 14),  # Tamaño de los títulos de los ejes
+    axis.text = element_text(size = 12),   # Tamaño del texto de los ejes
+    plot.title = element_text(size = 16, hjust = 0.5),  # Tamaño y centrado del título
+    legend.text = element_text(size = 12), # Tamaño del texto de la leyenda
+    legend.title = element_text(size = 14), # Tamaño del título de la leyenda
+    axis.title.x = element_blank()  # Eliminar el nombre del eje X
+  )
+
+
+# 2. Gráfico de Masa vs Longitud
+grafico_longitud <- ggplot(meteoritos, aes(x = mass, y = long, fill = mass)) +
+  geom_point(color = "black", stroke = 0.3, shape = 21, size = 2, alpha = 0.8) +
+  geom_smooth(method = "lm", color = "darkgreen", se = FALSE) +  # Añadir línea de regresión
+  scale_fill_viridis_c(option = "plasma", trans = "log", name = "Masa (t)", 
+                        labels = scales::label_comma(),
+                        breaks = c(min(meteoritos$mass), max(meteoritos$mass))) +  # Solo el valor mínimo y máximo
+  labs(title = "Dependencia Longitud",
+       x = "Masa (t)", y = "Longitud") + 
+  theme_minimal() +
+  theme(
+    legend.position = "right",          # Mover la leyenda a la derecha
+    axis.title = element_text(size = 14),  # Tamaño de los títulos de los ejes
+    axis.text = element_text(size = 12),   # Tamaño del texto de los ejes
+    plot.title = element_text(size = 16, hjust = 0.5),  # Tamaño y centrado del título
+    legend.text = element_text(size = 12), # Tamaño del texto de la leyenda
+    legend.title = element_text(size = 14) # Tamaño del título de la leyenda
+  )
+
+# Mostrar ambos gráficos uno debajo del otro
+grid.arrange(grafico_latitud, grafico_longitud, ncol = 1)
+
+```
+
+
+
+**Discusión:** Los análisis realizados muestran distintos patrones de distribución geográfica de los meteoritos en función de su masa. Los diagramas de cajas indican que los meteoritos de mayor masa tienden a concentrarse en ciertos rangos de latitud y longitud, sugiriendo una influencia geográfica específica en su dispersión. Por otro lado, los gráficos de dispersión con líneas de tendencia revelan que, aunque existe cierta variabilidad, los meteoritos más masivos tienden a impactar en áreas con menor dispersión latitudinal y longitudinal. Estos resultados pueden estar influenciados por factores geológicos y climáticos que afectan la entrada de los meteoritos en la atmósfera y su posterior impacto en la superficie terrestre. Además, es importante considerar posibles sesgos en la recolección de datos, ya que las áreas más investigadas pueden presentar un mayor número de registros de impactos.
